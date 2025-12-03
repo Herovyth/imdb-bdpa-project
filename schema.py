@@ -1,6 +1,6 @@
 from pyspark.sql.types import *
 
-schema_title_agas = StructType([
+schema_title_akas = StructType([
     StructField("titleId", StringType()),
     StructField("ordering", IntegerType()),
     StructField("title", StringType()),
@@ -59,4 +59,3 @@ schema_name_basics = StructType([
     StructField("primaryProfession", StringType()),
     StructField("knownForTitles", StringType())
 ])
-
