@@ -16,6 +16,16 @@ df_title_principals = load_imdb_file(spark, "imdb_dataset/title.principals.tsv.g
 df_title_ratings = load_imdb_file(spark, "imdb_dataset/title.ratings.tsv.gz", schema_title_ratings)
 df_name_basics = load_imdb_file(spark, "imdb_dataset/name.basics.tsv.gz", schema_name_basics)
 
+
+print("title.akas schema:\n")
+df_title_akas.printSchema()
+
+print("Number of rows:", df_title_akas.count())
+print("Number of columns:", len(df_title_akas.columns))
+print("Columns:", df_title_akas.columns)
+
+df_title_akas.select("title", "region", "language").describe().show()
+
 print("title.basics schema:\n")
 df_title_basics.printSchema()
 
@@ -25,7 +35,50 @@ print("Columns:", df_title_basics.columns)
 
 df_title_basics.select("startYear", "endYear", "runtimeMinutes").describe().show()
 
+print("title.crew schema:\n")
+df_title_crew.printSchema()
+
+print("Number of rows:", df_title_crew.count())
+print("Number of columns:", len(df_title_crew.columns))
+print("Columns:", df_title_crew.columns)
+
+df_title_crew.select("directors", "writers").describe().show()
+
+print("title.episode schema:\n")
+df_title_episode.printSchema()
+
+print("Number of rows:", df_title_episode.count())
+print("Number of columns:", len(df_title_episode.columns))
+print("Columns:", df_title_episode.columns)
+
+df_title_episode.select("seasonNumber", "episodeNumber").describe().show()
+
+print("title.principals schema:\n")
+df_title_principals.printSchema()
+
+print("Number of rows:", df_title_principals.count())
+print("Number of columns:", len(df_title_principals.columns))
+print("Columns:", df_title_principals.columns)
+
+df_title_principals.select("category", "job", "characters").describe().show()
+
+print("title.ratings schema:\n")
+df_title_ratings.printSchema()
+
+print("Number of rows:", df_title_ratings.count())
+print("Number of columns:", len(df_title_ratings.columns))
+print("Columns:", df_title_ratings.columns)
+
 df_title_ratings.select("averageRating", "numVotes").describe().show()
+
+print("name.basics schema:\n")
+df_name_basics.printSchema()
+
+print("Number of rows:", df_name_basics.count())
+print("Number of columns:", len(df_name_basics.columns))
+print("Columns:", df_name_basics.columns)
+
+df_name_basics.select("birthYear", "primaryProfession", "knownForTitles").describe().show()
 
 print("Business questions:\n")
 
