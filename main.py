@@ -1,149 +1,120 @@
 from pyspark.sql import SparkSession
-from pyspark.sql import Window
-import pyspark.sql.functions as f
+from pyspark.sql.functions import col, when
+from pyspark.ml.feature import VectorAssembler, StringIndexer
+from pyspark.ml import Pipeline
+from pyspark.ml.evaluation import RegressionEvaluator, MulticlassClassificationEvaluator
+
+from pyspark.ml.regression import LinearRegression, RandomForestRegressor, GBTRegressor
+from pyspark.ml.classification import LogisticRegression, RandomForestClassifier, GBTClassifier
 
 from loader import load_imdb_file
 from schema import *
-from save_csv import save_to_csv
 
-spark = SparkSession.builder.appName("IMDb Loader").getOrCreate()
+spark = SparkSession.builder.appName("IMDb Models").getOrCreate()
 
-df_title_akas = load_imdb_file(spark, "imdb_dataset/title.akas.tsv.gz", schema_title_akas)
+# 1. Завантажування даних
 df_title_basics = load_imdb_file(spark, "imdb_dataset/title.basics.tsv.gz", schema_title_basics)
-df_title_crew = load_imdb_file(spark, "imdb_dataset/title.crew.tsv.gz", schema_title_crew)
-df_title_episode = load_imdb_file(spark, "imdb_dataset/title.episode.tsv.gz", schema_title_episode)
-df_title_principals = load_imdb_file(spark, "imdb_dataset/title.principals.tsv.gz", schema_title_principals)
-df_title_ratings = load_imdb_file(spark, "imdb_dataset/title.ratings.tsv.gz", schema_title_ratings)
-df_name_basics = load_imdb_file(spark, "imdb_dataset/name.basics.tsv.gz", schema_name_basics)
+df_ratings = load_imdb_file(spark, "imdb_dataset/title.ratings.tsv.gz", schema_title_ratings)
 
+# Об'єднання таблиць
+df = df_title_basics.join(df_ratings, df_title_basics.tconst == df_ratings.tconst, "inner") \
+                    .select(df_title_basics.tconst,
+                            col("startYear").cast("int"),
+                            col("runtimeMinutes").cast("int"),
+                            col("numVotes").cast("int"),
+                            "averageRating",
+                            "titleType")
 
-print("title.akas schema:\n")
-df_title_akas.printSchema()
+# Видалення Nan
+df = df.dropna()
 
-print("Number of rows:", df_title_akas.count())
-print("Number of columns:", len(df_title_akas.columns))
-print("Columns:", df_title_akas.columns)
+# 2. Препроцесинг
+# Створення бінарних позначок
+df = df.withColumn("isGoodMovie", when(col("averageRating") >= 7, 1).otherwise(0))
 
-df_title_akas.select("title", "region", "language").describe().show()
+# Кодування категорувальних
+indexer = StringIndexer(inputCol="titleType", outputCol="titleType_index")
 
-print("title.basics schema:\n")
-df_title_basics.printSchema()
-
-print("Number of rows:", df_title_basics.count())
-print("Number of columns:", len(df_title_basics.columns))
-print("Columns:", df_title_basics.columns)
-
-df_title_basics.select("startYear", "endYear", "runtimeMinutes").describe().show()
-
-print("title.crew schema:\n")
-df_title_crew.printSchema()
-
-print("Number of rows:", df_title_crew.count())
-print("Number of columns:", len(df_title_crew.columns))
-print("Columns:", df_title_crew.columns)
-
-df_title_crew.select("directors", "writers").describe().show()
-
-print("title.episode schema:\n")
-df_title_episode.printSchema()
-
-print("Number of rows:", df_title_episode.count())
-print("Number of columns:", len(df_title_episode.columns))
-print("Columns:", df_title_episode.columns)
-
-df_title_episode.select("seasonNumber", "episodeNumber").describe().show()
-
-print("title.principals schema:\n")
-df_title_principals.printSchema()
-
-print("Number of rows:", df_title_principals.count())
-print("Number of columns:", len(df_title_principals.columns))
-print("Columns:", df_title_principals.columns)
-
-df_title_principals.select("category", "job", "characters").describe().show()
-
-print("title.ratings schema:\n")
-df_title_ratings.printSchema()
-
-print("Number of rows:", df_title_ratings.count())
-print("Number of columns:", len(df_title_ratings.columns))
-print("Columns:", df_title_ratings.columns)
-
-df_title_ratings.select("averageRating", "numVotes").describe().show()
-
-print("name.basics schema:\n")
-df_name_basics.printSchema()
-
-print("Number of rows:", df_name_basics.count())
-print("Number of columns:", len(df_name_basics.columns))
-print("Columns:", df_name_basics.columns)
-
-df_name_basics.select("birthYear", "primaryProfession", "knownForTitles").describe().show()
-
-print("Business questions:\n")
-
-# Знайти всі фільми після 2015 року, що мають жанр 'Action'. (filter)
-print("All movies after 2015 that have the genre Action")
-df_new_action = df_title_basics \
-    .filter((df_title_basics.startYear >= 2015) & df_title_basics.genres.contains("Action"))
-save_to_csv(df_new_action, "decades_action_movies")
-
-# Знайти людей, які мають професію 'actor'. (filter)
-print("People who have profession of an actor")
-df_actors = df_name_basics.filter(
-    f.array_contains(df_name_basics.primaryProfession, "actor")
+# Вектор фічей
+assembler_reg = VectorAssembler(
+    inputCols=["startYear", "runtimeMinutes", "numVotes", "titleType_index"],
+    outputCol="features"
 )
-df_actors = df_actors.withColumn(
-    "primaryProfession", f.concat_ws(",", "primaryProfession")
+
+assembler_clf = VectorAssembler(
+    inputCols=["startYear", "runtimeMinutes", "numVotes", "titleType_index"],
+    outputCol="features"
 )
-df_actors = df_actors.select("primaryName", "primaryProfession")
-save_to_csv(df_actors, "actors")
 
-# Отримати всі фільми, доступні китайською мовою. (filter)
-print("All the movies that are available in Chinese")
-df_zh_titles = df_title_akas.filter(df_title_akas.language == "zh") \
-    .select("titleId", "title", "region", "language")
-save_to_csv(df_zh_titles, "zh_titles")
+# Розділити вибірку
+train, test = df.randomSplit([0.8, 0.2], seed=42)
 
-# Отримати назви фільмів та їхній рейтинг. (join)
-print("Get movie titles and their ratings")
-df_movie_ratings = df_title_basics.join(df_title_ratings, "tconst", "inner") \
-    .select("primaryTitle", "averageRating", "numVotes")
-save_to_csv(df_movie_ratings, "title_ratings")
+print("Train size:", train.count())
+print("Test size:", test.count())
 
-# Знайти середній рейтинг для кожного жанру. (join + group by)
-print("An average rating for each genre")
-df_genre_rating = df_title_basics.join(df_title_ratings, "tconst") \
-    .withColumn("genre", f.explode(f.split("genres", ","))) \
-    .groupBy("genre") \
-    .agg(f.avg("averageRating").alias("avg_rating"))
-save_to_csv(df_genre_rating, "genre_avg_rating")
+# 3. Регресійні моделі
+reg_models = [
+    ("RandomForestRegressor", RandomForestRegressor(featuresCol="features", labelCol="averageRating")),
+    ("GBTRegressor", GBTRegressor(featuresCol="features", labelCol="averageRating")),
+    ("LinearRegression", LinearRegression(featuresCol="features", labelCol="averageRating"))
+]
 
-# Кількість фільмів у кожному жанрі. (group by)
-print("Number of movies per genre")
-df_movies_by_genre = df_title_basics.filter(df_title_basics.titleType == "movie") \
-    .withColumn("genre", f.explode(f.split("genres", ","))) \
-    .groupBy("genre") \
-    .agg(f.count("*").alias("movie_count")) \
-    .orderBy(f.desc("movie_count"))
-save_to_csv(df_movies_by_genre, "movies_count_by_genre")
+reg_results = []
 
-# Показати топ 5 найрейтинговіших фільмів у кожному році. (window function)
-print("Top 5 highest-rated movies in each year")
-w = Window.partitionBy("startYear").orderBy(f.desc("averageRating"))
+evaluator_rmse = RegressionEvaluator(labelCol="averageRating", metricName="rmse")
+evaluator_r2 = RegressionEvaluator(labelCol="averageRating", metricName="r2")
 
-df_year_top = df_title_basics.join(df_title_ratings, "tconst") \
-    .filter(df_title_basics.startYear.isNotNull()) \
-    .withColumn("rank", f.row_number().over(w)) \
-    .filter("rank <= 5")
+for name, model in reg_models:
+    pipeline = Pipeline(stages=[indexer, assembler_reg, model])
+    fitted = pipeline.fit(train)
 
-save_to_csv(df_year_top, "top5_year")
+    fitted.save(f"output/models/regression/{name}")
+    print(f"\nSaved regression model to output/models/regression/{name}.")
 
-# Обчислити кумулятивну кількість голосів у фільмах у межах року. (window function)
-print("Cumulative number of votes in films within a year")
-w2 = Window.partitionBy("startYear").orderBy("numVotes")
+    predictions = fitted.transform(test)
 
-df_votes_cum = df_title_basics.join(df_title_ratings, "tconst") \
-    .withColumn("cumulative_votes", f.sum("numVotes").over(w2))
+    rmse = evaluator_rmse.evaluate(predictions)
+    r2 = evaluator_r2.evaluate(predictions)
 
-save_to_csv(df_votes_cum, "votes_cumulative")
+    reg_results.append((name, rmse, r2))
+    print(f"\n{name}: RMSE={rmse:.4f}, R2={r2:.4f}")
+
+# 4. Класифікаційні моделі
+clf_models = [
+    ("RandomForestClassifier", RandomForestClassifier(featuresCol="features", labelCol="isGoodMovie")),
+    ("GBTClassifier", GBTClassifier(featuresCol="features", labelCol="isGoodMovie")),
+    ("LogisticRegressionClassifier", LogisticRegression(featuresCol="features", labelCol="isGoodMovie"))
+]
+
+clf_results = []
+
+evaluator_acc = MulticlassClassificationEvaluator(labelCol="isGoodMovie", metricName="accuracy")
+evaluator_f1 = MulticlassClassificationEvaluator(labelCol="isGoodMovie", metricName="f1")
+evaluator_precision = MulticlassClassificationEvaluator(labelCol="isGoodMovie", metricName="weightedPrecision")
+evaluator_recall = MulticlassClassificationEvaluator(labelCol="isGoodMovie", metricName="weightedRecall")
+
+for name, model in clf_models:
+    pipeline = Pipeline(stages=[indexer, assembler_clf, model])
+    fitted = pipeline.fit(train)
+
+    fitted.save(f"output/models/classification/{name}")
+    print(f"\nSaved classification model to output/models/classification/{name}.")
+
+    predictions = fitted.transform(test)
+
+    acc = evaluator_acc.evaluate(predictions)
+    f1 = evaluator_f1.evaluate(predictions)
+    precision = evaluator_precision.evaluate(predictions)
+    recall = evaluator_recall.evaluate(predictions)
+
+    clf_results.append((name, acc, precision, recall, f1))
+    print(f"\n{name}: ACC={acc:.4f}, Precision={precision:.4f}, Recall={recall:.4f}, F1={f1:.4f}")
+
+# 5. Результати
+print("\nRegression results:")
+for name, rmse, r2 in reg_results:
+    print(f"{name}: RMSE={rmse:.4f}, R2={r2:.4f}")
+
+print("\nClassification results:")
+for name, acc, prec, rec, f1 in clf_results:
+    print(f"{name}: Acc={acc:.4f}, Prec={prec:.4f}, Recall={rec:.4f}, F1={f1:.4f}")
