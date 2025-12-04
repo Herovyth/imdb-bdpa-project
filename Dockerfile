@@ -13,7 +13,7 @@ RUN wget -O - https://packages.adoptium.net/artifactory/api/gpg/key/public \
 RUN apt-get update && apt-get install -y temurin-17-jdk && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir pyspark
+RUN pip install --no-cache-dir pyspark numpy
 
 WORKDIR /app
 COPY . /app
